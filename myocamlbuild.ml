@@ -17,30 +17,48 @@ let extract_loadname line =
         let unquoted = String.sub quoted 0 (String.index quoted '"') in
         Some(unquoted)
     with Scanf.Scan_failure _ -> None;;
-let with_each_line_from_file ?bin fname f =
+let fold_file_lines ?bin fname f init =
+    let acc = ref init in
     with_input_file ?bin:bin fname (fun in_ch ->
         try while true do
-        f (input_line in_ch)
+        acc := f (input_line in_ch) !acc
         done with End_of_file -> ()
-    );;
-let add_libs_from_preprocs target =
+    ); !acc;;
+let add_libs_from_preprocs ?recursive target =
     let add_lib libname = (
-        Options.ocaml_libs @:= [strip_suffix x];
-        Printf.printf "Adding \"%s\" to the libs list.\n%!" x
+        Options.ocaml_libs @:= [strip_suffix libname];
+        Printf.printf "Adding \"%s\" to the libs list.\n%!" libname
     ) in
-    let add_file target = 
+    let get_libs_of_file target = (
         let fname = (strip_suffix target) ^ ".ml" in
         Printf.printf "Source filename is \"%s\"\n%!" fname;
-        with_each_line_from_file fname (fun line ->
+        try fold_file_lines fname (fun line acc ->
             match extract_loadname line with
-            | Some(x) -> add_lib x
-            | None -> ()
-        ) in
-    add_file target;;
+            | Some(x) -> x :: acc
+            | None -> acc
+        ) [] with Sys_error _ -> []
+    ) in
+    let add_libs_of_file target = List.iter add_lib (get_libs_of_file target) in
+    let module SS = Set.Make(String) in
+    let rec recursive_add_libs targets finished_targets = (
+        if SS.is_empty targets then () else begin
+            let least = SS.min_elt targets in
+            if SS.mem least finished_targets then () else begin
+                let new_elts = get_libs_of_file least in
+                List.iter add_lib new_elts;
+                let targets1 = (List.fold_left (fun x y -> SS.add y x) targets new_elts) in
+                let targets2 = (SS.remove least targets1) in
+                recursive_add_libs targets2 (SS.add least finished_targets)
+            end
+        end
+    ) in
+    let recur = match recursive with | Some(x) -> x | None -> false in
+    if not recur then add_libs_of_file target
+    else recursive_add_libs (SS.add target SS.empty) SS.empty;;
 
 let strip_preproc_and_inject_libs = (function
 | Before_options -> set_strip_preproc ()
-| After_options -> List.iter add_libs_from_preprocs !Options.targets
+| After_options -> List.iter (add_libs_from_preprocs ~recursive:true) !Options.targets
 | _ -> ()
 );;
 
