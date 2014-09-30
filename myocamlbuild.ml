@@ -16,7 +16,7 @@ let extract_loadname line =
         let quoted = Scanf.sscanf line "#load \"%s" (fun x -> x) in
         let unquoted = String.sub quoted 0 (String.index quoted '"') in
         Some(unquoted)
-    with Scanf.Scan_failure _ -> None;;
+    with Scanf.Scan_failure _ -> None | End_of_file -> None;;
 let fold_file_lines ?bin fname f init =
     let acc = ref init in
     with_input_file ?bin:bin fname (fun in_ch ->
